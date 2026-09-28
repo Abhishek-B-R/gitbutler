@@ -171,7 +171,7 @@ const drivenByUncommitted = (params: UrlQueryParams): boolean =>
 export const useCanShowFiles = (): boolean =>
 	useSearch({
 		from: WORKSPACE_ROUTE,
-		select: (params: UrlQueryParams) => !drivenByUncommitted(params),
+		select: (params: UrlQueryParams) => params.page !== "but-dev" && !drivenByUncommitted(params),
 	});
 
 export const sidebarFocusScopeOf = (): "sidebar" | "uncommitted-files" =>
@@ -268,6 +268,14 @@ export const setPage = (page: PageId): void => {
 
 	navigateParams((prev) => ({ ...prev, page: page === "workspace" ? undefined : page }));
 	store.dispatch(projectSlice.actions.clearPendingOperation({ projectId: projectIdOf() }));
+};
+
+export const setButDevCheckout = (checkoutId: string, target = "uncommitted"): void => {
+	navigateParams((prev) => ({
+		...prev,
+		butDevCheckout: checkoutId,
+		butDevTarget: target === "uncommitted" ? undefined : target,
+	}));
 };
 
 /** Name the workspace list that drives the details pane. */

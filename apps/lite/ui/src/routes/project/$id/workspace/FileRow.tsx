@@ -131,10 +131,6 @@ export const FileRowPresentational: FC<FileRowPresentationalProps> = ({
 	const rowTooltip = hasConflictHint
 		? `${relativePath} — Resolve the conflict, then right-click → Mark as Resolved`
 		: relativePath;
-	const lastSepIdx = relativePath.lastIndexOf("/");
-	const directoryPath = lastSepIdx !== -1 ? relativePath.slice(0, lastSepIdx) : null;
-	const fileName = lastSepIdx !== -1 ? relativePath.slice(lastSepIdx + 1) : relativePath;
-
 	return (
 		<Row
 			{...restProps}
@@ -162,52 +158,149 @@ export const FileRowPresentational: FC<FileRowPresentationalProps> = ({
 			{rail}
 			<TreeSteps depth={depth} />
 
+			<FileRowContent
+				path={relativePath}
+				pathDisplay={pathDisplay}
+				isReviewed={isReviewed}
+				conflicted={item._tag === "Conflict"}
+				status={item._tag === "Change" ? item.change.status.type : undefined}
+				tooltipHandle={tooltipHandle}
+				tooltipText={agedTooltip !== null ? `${rowTooltip} — ${agedTooltip}` : rowTooltip}
+				leading={
+					<RowCheckbox
+						disabled={anyOperationPending || !canCheck}
+						aria-label={`Check file ${relativePath}`}
+						checked={isChecked}
+						className={treeStyles.leadingCheckbox}
+						nativeButton
+						render={
+							presentationalOnly ? (
+								<button type="button" inert aria-hidden="true" tabIndex={-1} />
+							) : (
+								<Tooltip.Trigger
+									handle={tooltipHandle}
+									payload={{
+										content: changesFileHotkeys.checkFile.meta.name,
+										kbd: changesFileHotkeys.checkFile.hotkey,
+										kbdScope: focusScope,
+									}}
+								/>
+							)
+						}
+						onCheckedChange={
+							presentationalOnly
+								? undefined
+								: (_checked, { event }) => {
+										const shiftKey =
+											(event instanceof MouseEvent || event instanceof KeyboardEvent) &&
+											event.shiftKey === true;
+										checkFile({ path: relativePath, shiftKey });
+									}
+						}
+					/>
+				}
+			>
+				{!anyOperationPending &&
+					(presentationalOnly ? (
+						<RowToolbar aria-hidden="true">
+							<PresentationalRowButton icon="kebab" />
+						</RowToolbar>
+					) : (
+						<Toolbar.Root aria-label="File actions" render={<RowToolbar />}>
+							<Toolbar.Button
+								aria-label="File menu"
+								onClick={(event) => {
+									void showNativeMenuFromTrigger(
+										event.currentTarget,
+										menuItems,
+										fileParent._tag === "UncommittedChanges" ? { path: relativePath } : undefined,
+									);
+								}}
+								className={getRowButtonClassName({ iconOnly: true })}
+							>
+								<Icon name="kebab" />
+							</Toolbar.Button>
+						</Toolbar.Root>
+					))}
+
+				{ageBadge !== null && ageMs !== null && (
+					<span
+						className={styles.ageBadge}
+						style={{ "--age-badge-opacity": String(ageBadgeOpacity(ageMs)) } as CSSProperties}
+					>
+						{ageBadge}
+					</span>
+				)}
+
+				{!anyOperationPending &&
+					item._tag === "Change" &&
+					fileParent._tag === "UncommittedChanges" &&
+					item.dependencyCommitIds.length > 0 &&
+					(presentationalOnly ? (
+						<RowToolbar forceVisible aria-hidden="true">
+							<PresentationalRowButton icon="link" />
+						</RowToolbar>
+					) : (
+						<Toolbar.Root aria-label="File actions" render={<RowToolbar forceVisible />}>
+							<Toolbar.Button
+								render={
+									<DependencyIndicator
+										projectId={projectId}
+										commitIds={item.dependencyCommitIds}
+										branchNameByCommitId={branchNameByCommitId}
+										tooltipHandle={tooltipHandle}
+										className={getRowButtonClassName({ iconOnly: true })}
+									/>
+								}
+							>
+								<Icon name="link" />
+							</Toolbar.Button>
+						</Toolbar.Root>
+					))}
+			</FileRowContent>
+		</Row>
+	);
+};
+
+export const FileRowContent: FC<{
+	path: string;
+	pathDisplay: FileRowProps["pathDisplay"];
+	status?: ComponentProps<typeof FileStatusBadge>["status"];
+	conflicted?: boolean;
+	isReviewed?: boolean;
+	tooltipHandle: Tooltip.Handle<FileRowTooltipPayload>;
+	tooltipText?: string;
+	leading?: ReactNode;
+	children?: ReactNode;
+}> = ({
+	path,
+	pathDisplay,
+	status,
+	conflicted,
+	isReviewed,
+	tooltipHandle,
+	tooltipText = path,
+	leading,
+	children,
+}) => {
+	const lastSepIdx = path.lastIndexOf("/");
+	const directoryPath = lastSepIdx !== -1 ? path.slice(0, lastSepIdx) : null;
+	const fileName = lastSepIdx !== -1 ? path.slice(lastSepIdx + 1) : path;
+	return (
+		<>
 			<div className={treeStyles.leading}>
 				<FileIcon
 					fileName={fileName}
 					className={classes(treeStyles.leadingMark, isReviewed && styles.reviewedFade)}
 				/>
-				<RowCheckbox
-					disabled={anyOperationPending || !canCheck}
-					aria-label={`Check file ${relativePath}`}
-					checked={isChecked}
-					className={treeStyles.leadingCheckbox}
-					nativeButton
-					render={
-						presentationalOnly ? (
-							<button type="button" inert aria-hidden="true" tabIndex={-1} />
-						) : (
-							<Tooltip.Trigger
-								handle={tooltipHandle}
-								payload={{
-									content: changesFileHotkeys.checkFile.meta.name,
-									kbd: changesFileHotkeys.checkFile.hotkey,
-									kbdScope: focusScope,
-								}}
-							/>
-						)
-					}
-					onCheckedChange={
-						presentationalOnly
-							? undefined
-							: (_checked, { event }) => {
-									const shiftKey =
-										(event instanceof MouseEvent || event instanceof KeyboardEvent) &&
-										event.shiftKey === true;
-									checkFile({ path: relativePath, shiftKey });
-								}
-					}
-				/>
+				{leading}
 			</div>
-
 			<Tooltip.Trigger
 				handle={tooltipHandle}
-				payload={{
-					content: agedTooltip !== null ? `${rowTooltip} — ${agedTooltip}` : rowTooltip,
-				}}
+				payload={{ content: tooltipText }}
 				render={<RowLabelContainer className={classes(isReviewed && styles.reviewedFade)} />}
 			>
-				{item._tag === "Conflict" && (
+				{conflicted && (
 					<ConflictIcon
 						variant="conflict"
 						className={styles.conflictIcon}
@@ -224,85 +317,22 @@ export const FileRowPresentational: FC<FileRowPresentationalProps> = ({
 					)}
 				</RowLabel>
 			</Tooltip.Trigger>
-
-			{!anyOperationPending &&
-				(presentationalOnly ? (
-					<RowToolbar aria-hidden="true">
-						<PresentationalRowButton icon="kebab" />
-					</RowToolbar>
-				) : (
-					<Toolbar.Root aria-label="File actions" render={<RowToolbar />}>
-						<Toolbar.Button
-							aria-label="File menu"
-							onClick={(event) => {
-								void showNativeMenuFromTrigger(
-									event.currentTarget,
-									menuItems,
-									fileParent._tag === "UncommittedChanges" ? { path: relativePath } : undefined,
-								);
-							}}
-							className={getRowButtonClassName({ iconOnly: true })}
-						>
-							<Icon name="kebab" />
-						</Toolbar.Button>
-					</Toolbar.Root>
-				))}
-
-			{ageBadge !== null && ageMs !== null && (
-				<span
-					className={styles.ageBadge}
-					style={{ "--age-badge-opacity": String(ageBadgeOpacity(ageMs)) } as CSSProperties}
-				>
-					{ageBadge}
-				</span>
-			)}
-
-			{!anyOperationPending &&
-				item._tag === "Change" &&
-				fileParent._tag === "UncommittedChanges" &&
-				item.dependencyCommitIds.length > 0 &&
-				(presentationalOnly ? (
-					<RowToolbar forceVisible aria-hidden="true">
-						<PresentationalRowButton icon="link" />
-					</RowToolbar>
-				) : (
-					<Toolbar.Root aria-label="File actions" render={<RowToolbar forceVisible />}>
-						<Toolbar.Button
-							render={
-								<DependencyIndicator
-									projectId={projectId}
-									commitIds={item.dependencyCommitIds}
-									branchNameByCommitId={branchNameByCommitId}
-									tooltipHandle={tooltipHandle}
-									className={getRowButtonClassName({ iconOnly: true })}
-								/>
-							}
-						>
-							<Icon name="link" />
-						</Toolbar.Button>
-					</Toolbar.Root>
-				))}
-
-			{item._tag === "Change" && (
+			{children}
+			{status !== undefined && (
 				<Tooltip.Trigger
 					handle={tooltipHandle}
-					payload={{ content: isReviewed ? "Reviewed" : item.change.status.type }}
-					// By default it's a button, but we don't want this to be
-					// interactive.
+					payload={{ content: isReviewed ? "Reviewed" : status }}
 					render={
 						isReviewed ? (
-							// The tick stands in for the change type rather than joining it: a
-							// reviewed file's news is that it is done with, and the type is a
-							// hover away.
 							<span aria-label="Reviewed" className={styles.reviewedMark}>
 								<Icon size={11} name="tick" />
 							</span>
 						) : (
-							<FileStatusBadge status={item.change.status.type} />
+							<FileStatusBadge status={status} />
 						)
 					}
 				/>
 			)}
-		</Row>
+		</>
 	);
 };

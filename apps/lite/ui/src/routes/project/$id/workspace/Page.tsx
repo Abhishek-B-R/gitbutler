@@ -95,6 +95,7 @@ import {
 import { activeLists, type ActiveList } from "#ui/projects/project.ts";
 import { defaultSettings } from "#ui/settings.ts";
 import { parseDragData } from "./DragData.ts";
+import { ButDevDetails } from "./ButDev.tsx";
 
 // This must be unique as to not collide with other IDs, and stable because it's
 // stored in local storage.
@@ -117,7 +118,9 @@ const useWorkspaceHotkeys = (projectId: string) => {
 	const sidebarFocusScope = useSidebarFocusScope();
 	const page = usePage();
 	const getFilesVisible = () =>
-		canShowFiles && projectSlice.selectors.selectFilesVisible(store.getState(), projectId);
+		page === "but-dev"
+			? document.querySelector('[data-focus-scope="files"]') !== null
+			: canShowFiles && projectSlice.selectors.selectFilesVisible(store.getState(), projectId);
 
 	const { isPending: isRestoreSnapshotPending, mutate: restoreSnapshot } = useRestoreSnapshot({
 		projectId,
@@ -149,7 +152,7 @@ const useWorkspaceHotkeys = (projectId: string) => {
 			hotkey: globalHotkeys.redo.hotkey,
 			callback: () => restoreSnapshot({ _tag: "redo" }),
 			options: {
-				enabled: noOperationPending && !isRestoreSnapshotPending,
+				enabled: page !== "but-dev" && noOperationPending && !isRestoreSnapshotPending,
 				meta: globalHotkeys.redo.meta,
 				ignoreInputs: true,
 			},
@@ -158,7 +161,7 @@ const useWorkspaceHotkeys = (projectId: string) => {
 			hotkey: globalHotkeys.undo.hotkey,
 			callback: () => restoreSnapshot({ _tag: "undo" }),
 			options: {
-				enabled: noOperationPending && !isRestoreSnapshotPending,
+				enabled: page !== "but-dev" && noOperationPending && !isRestoreSnapshotPending,
 				meta: globalHotkeys.undo.meta,
 				ignoreInputs: true,
 			},
@@ -181,7 +184,7 @@ const useWorkspaceHotkeys = (projectId: string) => {
 					dispatch(interfaceSlice.actions.openDialog({ dialog: { _tag: "OperationsLogPicker" } }));
 			},
 			options: {
-				enabled: noOperationPending,
+				enabled: page !== "but-dev" && noOperationPending,
 				meta: globalHotkeys.operationsLog.meta,
 			},
 		},
@@ -221,7 +224,7 @@ const useWorkspaceHotkeys = (projectId: string) => {
 					},
 				},
 			]),
-			Match.when("branches", () => [
+			Match.when(Match.is("branches", "but-dev"), () => [
 				{
 					hotkey: "1",
 					callback: () => focusScope("sidebar"),
@@ -549,6 +552,7 @@ const PageBody: FC<{ projectId: string }> = ({ projectId }) => {
 					<Details selection={branchesSelection} review={null} {...viewProps} />
 				),
 			),
+			Match.when("but-dev", () => <ButDevDetails />),
 			Match.exhaustive,
 		);
 	}, [
@@ -593,7 +597,8 @@ const PageBody: FC<{ projectId: string }> = ({ projectId }) => {
 		select: (cfg) => cfg.terminalId ?? "",
 	});
 
-	const canOpenTerminal = project !== undefined && terminalId !== undefined && terminalId !== "";
+	const canOpenTerminal =
+		page !== "but-dev" && project !== undefined && terminalId !== undefined && terminalId !== "";
 	useHotkey(
 		workspaceHotkeys.openInTerminal.hotkey,
 		() => {
@@ -679,11 +684,13 @@ const PageBody: FC<{ projectId: string }> = ({ projectId }) => {
 				</Panel>
 			</Group>
 
-			<OperationControls
-				projectId={projectId}
-				appliedAddressSpace={appliedAddressSpace}
-				onFocusRestore={(scope) => setFocusRestoreRequest({ scope })}
-			/>
+			{page !== "but-dev" && (
+				<OperationControls
+					projectId={projectId}
+					appliedAddressSpace={appliedAddressSpace}
+					onFocusRestore={(scope) => setFocusRestoreRequest({ scope })}
+				/>
+			)}
 
 			{Match.value(dialog).pipe(
 				Match.tagsExhaustive({
@@ -737,6 +744,7 @@ const PageBody: FC<{ projectId: string }> = ({ projectId }) => {
 
 export const Page: FC = () => {
 	const { id: projectId } = useParams({ from: "/project/$id/workspace" });
+	const page = usePage();
 
 	const { data: projects } = useSuspenseQuery(listProjectsQueryOptions);
 	const { data: headAndMode } = useQuery(operatingModeQueryOptions(projectId));
@@ -746,7 +754,7 @@ export const Page: FC = () => {
 	// Edit mode is repository state, not navigation: the whole surface swaps
 	// while HEAD is parked on the edit ref, and swaps back when it returns —
 	// including when the transition happened in a terminal.
-	if (headAndMode?.operatingMode.type === "Edit")
+	if (page !== "but-dev" && headAndMode?.operatingMode.type === "Edit")
 		return <EditModePage projectId={projectId} metadata={headAndMode.operatingMode.subject} />;
 
 	return (

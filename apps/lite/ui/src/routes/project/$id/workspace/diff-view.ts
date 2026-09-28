@@ -20,6 +20,7 @@ import type { DiffLineSelection } from "#ui/cursors.ts";
 import type { TreeChange, UnifiedPatch } from "@gitbutler/but-sdk";
 import {
 	processFile,
+	type CodeView,
 	type CodeViewDiffItem,
 	type CodeViewFileItem,
 	type CodeViewItem,
@@ -52,6 +53,17 @@ export const codeViewItemMetrics = {
 	paddingTop: 6,
 	paddingBottom: 9,
 } satisfies Partial<VirtualFileMetrics>;
+
+export const itemAtViewportTop = <T>(
+	scrollTop: number,
+	viewer: CodeView<T>,
+	items: ReadonlyArray<CodeViewItem<T>>,
+) =>
+	// The rendered window can lag behind a fast scroll; use all items' layout positions.
+	items.findLast((item) => {
+		const top = viewer.getTopForItem(item.id);
+		return top !== undefined && top <= scrollTop;
+	});
 
 type PrepareDiffFilesDeps = {
 	fileParent: FileParent;

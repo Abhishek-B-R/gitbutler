@@ -146,7 +146,7 @@ const createInitialWorkspaceState = (): WorkspaceState => ({
 	filesCollapsedDirectories: {},
 });
 
-export type PageId = "workspace" | "branches";
+export type PageId = "workspace" | "branches" | "but-dev";
 
 export type ProjectState = {
 	filesVisible: boolean;

@@ -19,6 +19,8 @@ export type UrlQueryParams = {
 	uncommitted?: string;
 	unapplied?: string;
 	files?: string;
+	butDevCheckout?: string;
+	butDevTarget?: string;
 };
 
 /** The lists whose cursor is a URL param — every list but `diff`. */

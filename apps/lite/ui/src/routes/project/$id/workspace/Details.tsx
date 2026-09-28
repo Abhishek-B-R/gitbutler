@@ -110,7 +110,12 @@ import {
 	type FileContents,
 	isDiffAnnotation,
 } from "@pierre/diffs";
-import { CodeView, type CodeViewHandle, useStableCallback } from "@pierre/diffs/react";
+import {
+	CodeView,
+	type CodeViewHandle,
+	type CodeViewProps,
+	useStableCallback,
+} from "@pierre/diffs/react";
 import {
 	keepPreviousData,
 	useQuery,
@@ -122,6 +127,7 @@ import {
 	type ComponentProps,
 	type FC,
 	type ReactNode,
+	type Ref,
 	type RefObject,
 	Suspense,
 	useId,
@@ -224,6 +230,7 @@ import {
 	type DiffView,
 	getDiffView,
 	hunkAddressIdentityKey,
+	itemAtViewportTop,
 	prepareDiffFiles,
 	resolveDiffSelection,
 	withoutFoldedHunks,
@@ -254,6 +261,127 @@ export type DiffViewerHandle = CodeViewHandle<Annotation>;
 // This must be unique as to not collide with other IDs, and stable because it's
 // stored in local storage.
 type PanelId = "files-panel" | "diff-panel";
+
+export const DiffPanels: FC<{
+	layoutId: string;
+	files: ReactNode;
+	filesOnRight: boolean;
+	children: ReactNode;
+}> = ({ layoutId, files, filesOnRight, children }) => {
+	const panelIds: Array<PanelId> = files == null ? ["diff-panel"] : ["files-panel", "diff-panel"];
+	const layout = useDefaultLayout({ id: layoutId, panelIds });
+	const filesPanel =
+		files == null ? null : (
+			<Panel
+				id="files-panel"
+				className={styles.panel}
+				defaultSize={320}
+				minSize={220}
+				groupResizeBehavior="preserve-pixel-size"
+			>
+				{files}
+			</Panel>
+		);
+	return (
+		<div className={styles.diffTab}>
+			<Group
+				id={layoutId}
+				defaultLayout={layout.defaultLayout}
+				onLayoutChanged={layout.onLayoutChanged}
+			>
+				{filesPanel !== null && !filesOnRight && (
+					<>
+						{filesPanel}
+						<ResizeHandle />
+					</>
+				)}
+				<Panel id="diff-panel" minSize={300} className={styles.panel}>
+					{children}
+				</Panel>
+				{filesPanel !== null && filesOnRight && (
+					<>
+						<ResizeHandle />
+						{filesPanel}
+					</>
+				)}
+			</Group>
+		</div>
+	);
+};
+
+export const DiffCodeView = <T,>(
+	props: CodeViewProps<T> & {
+		ref?: Ref<CodeViewHandle<T>>;
+		/** The shared spacing and metrics describe GitButler's header, not Pierre's stock header. */
+		renderCustomHeader: NonNullable<CodeViewProps<T>["renderCustomHeader"]>;
+	},
+) => {
+	const { data: settings } = useQuery({
+		...guiSettingsQueryOptions,
+		select: (cfg) => ({
+			diffStyle: cfg.diffStyle ?? defaultSettings.diffStyle,
+			diffBackground: cfg.diffBackground ?? defaultSettings.diffBackground,
+			diffOverflow: cfg.diffOverflow ?? defaultSettings.diffOverflow,
+			lineDiffType: cfg.lineDiffType ?? defaultSettings.lineDiffType,
+			theme: cfg.theme ?? defaultSettings.theme,
+			fontFamily: cfg.diffFontFamily ?? defaultSettings.diffFontFamily,
+			fontSize: cfg.diffFontSize ?? defaultSettings.diffFontSize,
+			tabSize: cfg.diffTabSize ?? defaultSettings.diffTabSize,
+			ligatures: cfg.diffLigatures ?? defaultSettings.diffLigatures,
+		}),
+	});
+	return (
+		<CodeView<T>
+			{...props}
+			className={classes(styles.diffContents, props.className)}
+			options={{
+				diffStyle: settings?.diffStyle ?? defaultSettings.diffStyle,
+				disableBackground: !(settings?.diffBackground ?? defaultSettings.diffBackground),
+				overflow: settings?.diffOverflow ?? defaultSettings.diffOverflow,
+				lineDiffType: settings?.lineDiffType ?? defaultSettings.lineDiffType,
+				themeType: settings?.theme ?? defaultSettings.theme,
+				stickyHeaders: true,
+				layout: codeViewLayout,
+				itemMetrics: codeViewItemMetrics,
+				...props.options,
+				unsafeCSS: `
+					:host {
+						background-color: transparent;
+						font-variant-ligatures: ${settings?.ligatures ? "normal" : "none"};
+					}
+					[data-diffs-header="custom"] { background-color: var(--bg-1); }
+					[data-diff] { border: none; }
+					[data-column-number] {
+						--mix-selection-light: 0%;
+						--mix-selection-dark: 0%;
+						cursor: var(--control-cursor);
+					}
+					[data-column-number][data-selected-line]:is(
+						[data-line-type="context"], [data-line-type="context-expanded"]
+					) {
+						--diffs-bg-selection-number-override: var(--bg-selected-inactive);
+						color: var(--text-1);
+					}
+					/* Keep the header's spacing in step with the virtual item metrics. */
+					[data-diffs-header] ~ [data-diff] {
+						& [data-code],
+						&[data-diff-type="split"][data-overflow="wrap"],
+						&[data-dehydrated][data-diff-type="split"][data-overflow="scroll"] {
+							padding-top: ${codeViewItemMetrics.paddingTop}px;
+						}
+					}
+					${props.options?.unsafeCSS ?? ""}
+				`,
+			}}
+			style={{
+				"--diffs-font-family": settings?.fontFamily ?? defaultSettings.diffFontFamily,
+				"--diffs-font-size": `${settings?.fontSize ?? defaultSettings.diffFontSize}px`,
+				"--diffs-tab-size": `${settings?.tabSize ?? defaultSettings.diffTabSize}`,
+				...props.style,
+			}}
+		/>
+	);
+};
 
 const EMPTY_ANNOTATIONS_BY_PATH: LocalAnnotationsByPath = new Map();
 const EMPTY_THREADS_BY_PATH: ThreadsByPath = new Map();
@@ -491,12 +619,6 @@ const DiffContents: FC<{
 		...guiSettingsQueryOptions,
 		select: (cfg) => ({
 			editor: editors?.find((editor) => editor.id === cfg.editorId),
-			diffFontFamily: cfg.diffFontFamily,
-			diffFontSize: cfg.diffFontSize,
-			diffLigatures: cfg.diffLigatures,
-			diffTabSize: cfg.diffTabSize,
-			lineDiffType: cfg.lineDiffType,
-			theme: cfg.theme,
 		}),
 	});
 	const { openPathInProgram } = useOpenPathInProgram(projectId);
@@ -1196,10 +1318,7 @@ const DiffContents: FC<{
 		}
 		pendingFileRef.current = null;
 
-		const activeItem = viewer
-			.getRenderedItems()
-			// It can only be undefined if the item ID is invalid.
-			.findLast((item) => assert(viewer.getTopForItem(item.id)) <= scrollTop);
+		const activeItem = itemAtViewportTop(scrollTop, viewer, items);
 
 		// This can happen on very fast scroll.
 		if (activeItem === undefined) return;
@@ -1691,7 +1810,7 @@ const DiffContents: FC<{
 	// list here is a frame between renders rather than a state to describe.
 	return items.length === 0 ? null : (
 		<>
-			<CodeView
+			<DiffCodeView
 				ref={viewerRef}
 				renderCodeViewFooter={() => <DiffFooter key={diffContextKey} />}
 				renderCustomHeader={(item) => {
@@ -1783,46 +1902,21 @@ const DiffContents: FC<{
 					);
 				}}
 				onScroll={selectFileAtViewportTop}
-				className={styles.diffContents}
 				items={displayItems}
 				selectedLines={selectedLines}
 				options={{
 					diffStyle: effectiveDiffStyle,
 					loadDiffFiles,
 					disableBackground: !(diffBackgrounds ?? defaultSettings.diffBackground),
-					lineDiffType: settings?.lineDiffType ?? defaultSettings.lineDiffType,
 					overflow: diffOverflow ?? defaultSettings.diffOverflow,
-					themeType: settings?.theme ?? defaultSettings.theme,
-					stickyHeaders: true,
 					onLineNumberClick: handleLineNumberClick,
-					layout: codeViewLayout,
 					// This appears to validate before our custom header has been slotted, in which case - if
 					// our metrics are correct - we should see deltas in multiples of our custom header height
 					// as defined in the metrics. We'll see an additional set of logs if there are other issues
 					// with our metrics.
 					__devOnlyValidateItemHeights: false,
 					onPostRender: handleMarkedDiffPostRender,
-					itemMetrics: codeViewItemMetrics,
 					unsafeCSS: `
-          :host {
-            background-color: transparent;
-            /* Inherited, so this reaches the code inside the shadow root — which is the
-               only way in, since ligatures are not one of Pierre's options. */
-            font-variant-ligatures: ${
-							(settings?.diffLigatures ?? defaultSettings.diffLigatures) ? "normal" : "none"
-						};
-          }
-
-          [data-diffs-header="custom"] {
-            background-color: var(--bg-1);
-          }
-
-          [data-diff] {
-            border-width: 0 1px 1px 1px;
-            border-style: solid;
-            border: none;
-          }
-
     		  /* Pierre doesn't support image diffs yet:
                https://github.com/pierrecomputer/pierre/issues/258
 
@@ -1837,41 +1931,11 @@ const DiffContents: FC<{
     		    pointer-events: none;
     		  }
 
-          [data-column-number] {
-            --mix-selection-light: 0%;
-            --mix-selection-dark: 0%;
-
-            cursor: var(--control-cursor);
-          }
-
-          [data-column-number][data-selected-line]:is(
-            [data-line-type="context"],
-            [data-line-type="context-expanded"]
-          ) {
-            --diffs-bg-selection-number-override: var(--bg-selected-inactive);
-
-            color: var(--text-1);
-          }
-
-          /* Air under the file header. Pierre zeroes this padding when there is a
-             header; the selectors mirror that rule, and the virtual layout accounts
-             for it through the paddingTop item metric. */
-          [data-diffs-header] ~ [data-diff] {
-            & [data-code],
-            &[data-diff-type="split"][data-overflow="wrap"],
-            &[data-dehydrated][data-diff-type="split"][data-overflow="scroll"] {
-              padding-top: ${codeViewItemMetrics.paddingTop}px;
-            }
-          }
-
           ${diffGutterUnsafeCSS}
           ${diffSearchMarksUnsafeCSS}
         `,
 				}}
 				style={{
-					"--diffs-font-family": settings?.diffFontFamily ?? defaultSettings.diffFontFamily,
-					"--diffs-font-size": `${settings?.diffFontSize ?? defaultSettings.diffFontSize}px`,
-					"--diffs-tab-size": `${settings?.diffTabSize ?? defaultSettings.diffTabSize}`,
 					"--gitbutler-diff-gutter-can-drag": String(fileParent._tag !== "Branch"),
 				}}
 			/>
@@ -1924,24 +1988,6 @@ const DiffFileHeader: FC<DiffFileHeaderProps> = (p) => {
 		change: p.change,
 	});
 
-	const lastSepIdx = p.change.path.lastIndexOf("/");
-	const directoryPath = lastSepIdx !== -1 ? p.change.path.slice(0, lastSepIdx) : null;
-	const fileName = lastSepIdx !== -1 ? p.change.path.slice(lastSepIdx + 1) : p.change.path;
-
-	// The counts read as added/removed lines on sight, but only to someone who
-	// knows the colouring: the wording carries the units, for the tooltip and for
-	// screen readers alike.
-	const lineStatsParts = p.lineStats === null ? [] : describeLineStats(p.lineStats);
-	const lineStatsLabel = lineStatsParts.length === 0 ? null : lineStatsParts.join(", ");
-
-	const collapseLabel = p.collapsed ? "Unfold" : "Fold";
-	const reviewLabel =
-		p.reviewState === "reviewed"
-			? "Reviewed"
-			: p.reviewState === "changed"
-				? "Needs review"
-				: "Not reviewed";
-
 	return (
 		<OperationSourceC
 			projectId={p.projectId}
@@ -1950,116 +1996,159 @@ const DiffFileHeader: FC<DiffFileHeaderProps> = (p) => {
 			outline="inside"
 			acceptOriginDrop
 		>
-			<header
-				// Not a tab stop, but mouse-focusable: clicking the header's own chrome
-				// focuses it as the nearest focusable ancestor, so Tab walks this file's
-				// actions instead of restarting at the first file in the diff, which is
-				// where focus landing on the diff container sends it.
-				tabIndex={-1}
+			<DiffFileHeaderView
+				path={p.change.path}
+				hasDiff={p.hasDiff}
+				collapsed={p.collapsed}
+				selected={p.selected}
+				lineStats={p.lineStats}
+				setCollapsed={p.setCollapsed}
+				reviewState={p.reviewState}
+				setReviewed={p.setReviewed}
+				collapseKbd={diffHotkeys.toggleFoldFile.hotkey}
 				onContextMenu={(event) => {
 					void showNativeContextMenu(event, menuItems);
 				}}
-				className={classes(
-					styles.fileHeader,
-					(p.collapsed || !p.hasDiff) && styles.lone,
-					p.collapsed && styles.folded,
-					p.selected && styles.fileHeaderSelected,
-				)}
 			>
-				<Tooltip content={collapseLabel} kbd={diffHotkeys.toggleFoldFile.hotkey} kbdScope="diff">
-					<Button
-						size="small"
-						variant="ghost"
-						iconOnly
-						aria-label={collapseLabel}
-						aria-expanded={!p.collapsed}
-						onClick={() => p.setCollapsed(!p.collapsed)}
-					>
-						<Icon name={p.collapsed ? "chevron-right" : "chevron-down"} />
-					</Button>
-				</Tooltip>
-				<h4 className={classes("text-13", styles.filePath)}>
-					<FileIcon fileName={fileName} className={styles.icon} />
-					{fileName}
-					{directoryPath !== null && <span className={styles.pathInit}>{directoryPath}</span>}
-				</h4>
-				<div className={styles.fileHeaderEnd}>
-					{p.lineStats && lineStatsLabel !== null && (
-						<Tooltip content={lineStatsLabel}>
-							<div aria-label={lineStatsLabel} className={styles.fileMeta}>
-								<DiffStats
-									added={p.lineStats.linesAdded}
-									removed={p.lineStats.linesRemoved}
-									className="text-12"
-								/>
-								<ChangeScale added={p.lineStats.linesAdded} removed={p.lineStats.linesRemoved} />
-							</div>
-						</Tooltip>
-					)}
-
-					<Toolbar.Root aria-label="File actions" className={styles.fileHeaderActions}>
-						<Toolbar.Separator className={styles.fileHeaderSeparator} />
-						{/* One button carrying checkbox semantics, with the box drawn inside it,
-						    rather than a real Checkbox nested in a button or a label. Both of
-						    those leave two controls where the design has one, and Base UI's
-						    checkbox renders unfocusable inside a label. "Changed since you
-						    reviewed it" is the mixed state; the tooltip spells that out. */}
-						<Tooltip content={reviewLabel}>
-							<Toolbar.Button
-								aria-pressed={p.reviewState === "changed" ? "mixed" : p.reviewState === "reviewed"}
-								className={classes(
-									getButtonClassName({ size: "small", variant: "ghost" }),
-									styles.fileReview,
-								)}
-								onClick={() => p.setReviewed(p.reviewState !== "reviewed")}
-							>
-								<span className={styles.fileReviewBox} aria-hidden="true">
-									{p.reviewState !== null && (
-										<Icon size={10} name={p.reviewState === "reviewed" ? "tick" : "minus"} />
-									)}
-								</span>
-								Reviewed
-							</Toolbar.Button>
-						</Tooltip>
-						<Toolbar.Button
-							aria-label="File menu"
-							onClick={(event) => {
-								void showNativeMenuFromTrigger(event.currentTarget, menuItems);
-							}}
-							className={getButtonClassName({ size: "small", variant: "ghost", iconOnly: true })}
-						>
-							<Icon name="kebab" />
-						</Toolbar.Button>
-					</Toolbar.Root>
-				</div>
-			</header>
+				<Toolbar.Button
+					aria-label="File menu"
+					onClick={(event) => {
+						void showNativeMenuFromTrigger(event.currentTarget, menuItems);
+					}}
+					className={getButtonClassName({ size: "small", variant: "ghost", iconOnly: true })}
+				>
+					<Icon name="kebab" />
+				</Toolbar.Button>
+			</DiffFileHeaderView>
 		</OperationSourceC>
 	);
 };
 
-const FilesToggle: FC<{ projectId: string }> = ({ projectId }) => {
-	const dispatch = useAppDispatch();
-	const filesVisible = useAppSelector((state) =>
-		projectSlice.selectors.selectFilesVisible(state, projectId),
-	);
-
+export const DiffFileHeaderView: FC<{
+	path: string;
+	hasDiff: boolean;
+	collapsed: boolean;
+	selected: boolean;
+	lineStats: LineStats | null;
+	setCollapsed: (collapsed: boolean) => void;
+	reviewState: "reviewed" | "changed" | null;
+	setReviewed: (reviewed: boolean) => void;
+	collapseKbd?: ComponentProps<typeof Tooltip>["kbd"];
+	onContextMenu?: ComponentProps<"header">["onContextMenu"];
+	children?: ReactNode;
+}> = ({
+	path,
+	hasDiff,
+	collapsed,
+	selected,
+	lineStats,
+	setCollapsed,
+	reviewState,
+	setReviewed,
+	collapseKbd,
+	onContextMenu,
+	children,
+}) => {
+	const lastSepIdx = path.lastIndexOf("/");
+	const directoryPath = lastSepIdx !== -1 ? path.slice(0, lastSepIdx) : null;
+	const fileName = lastSepIdx !== -1 ? path.slice(lastSepIdx + 1) : path;
+	const lineStatsLabel = lineStats === null ? "" : describeLineStats(lineStats).join(", ");
+	const collapseLabel = collapsed ? "Unfold" : "Fold";
+	const reviewLabel =
+		reviewState === "reviewed"
+			? "Reviewed"
+			: reviewState === "changed"
+				? "Needs review"
+				: "Not reviewed";
 	return (
-		<Tooltip
-			content={workspaceHotkeys.toggleFiles.meta.name}
-			kbd={workspaceHotkeys.toggleFiles.hotkey}
+		<header
+			// Mouse-focusable so Tab enters this file's actions rather than the first file's.
+			tabIndex={-1}
+			onContextMenu={onContextMenu}
+			className={classes(
+				styles.fileHeader,
+				(collapsed || !hasDiff) && styles.lone,
+				collapsed && styles.folded,
+				selected && styles.fileHeaderSelected,
+			)}
 		>
-			<Button
-				iconOnly
-				variant="ghost"
-				aria-label={workspaceHotkeys.toggleFiles.meta.name}
-				aria-pressed={filesVisible}
-				onClick={() => dispatch(projectSlice.actions.toggleFiles({ projectId }))}
-			>
-				{filesVisible ? <Icon name="files-sidebar" /> : <Icon name="sidebar-narrow" />}
-			</Button>
-		</Tooltip>
+			<Tooltip content={collapseLabel} kbd={collapseKbd} kbdScope="diff">
+				<Button
+					size="small"
+					variant="ghost"
+					iconOnly
+					aria-label={collapseLabel}
+					aria-expanded={!collapsed}
+					onClick={() => setCollapsed(!collapsed)}
+				>
+					<Icon name={collapsed ? "chevron-right" : "chevron-down"} />
+				</Button>
+			</Tooltip>
+			<h4 className={classes("text-13", styles.filePath)}>
+				<FileIcon fileName={fileName} className={styles.icon} />
+				{fileName}
+				{directoryPath !== null && <span className={styles.pathInit}>{directoryPath}</span>}
+			</h4>
+			<div className={styles.fileHeaderEnd}>
+				{lineStats !== null && lineStatsLabel !== "" && (
+					<Tooltip content={lineStatsLabel}>
+						<div aria-label={lineStatsLabel} className={styles.fileMeta}>
+							<DiffStats
+								added={lineStats.linesAdded}
+								removed={lineStats.linesRemoved}
+								className="text-12"
+							/>
+							<ChangeScale added={lineStats.linesAdded} removed={lineStats.linesRemoved} />
+						</div>
+					</Tooltip>
+				)}
+				<Toolbar.Root aria-label="File actions" className={styles.fileHeaderActions}>
+					<Toolbar.Separator className={styles.fileHeaderSeparator} />
+					{/* Keep one control, rather than nesting a checkbox inside a button.
+					    Mixed means the file changed since it was reviewed. */}
+					<Tooltip content={reviewLabel}>
+						<Toolbar.Button
+							aria-pressed={reviewState === "changed" ? "mixed" : reviewState === "reviewed"}
+							className={classes(
+								getButtonClassName({ size: "small", variant: "ghost" }),
+								styles.fileReview,
+							)}
+							onClick={() => setReviewed(reviewState !== "reviewed")}
+						>
+							<span className={styles.fileReviewBox} aria-hidden="true">
+								{reviewState !== null && (
+									<Icon size={10} name={reviewState === "reviewed" ? "tick" : "minus"} />
+								)}
+							</span>
+							Reviewed
+						</Toolbar.Button>
+					</Tooltip>
+					{children}
+				</Toolbar.Root>
+			</div>
+		</header>
 	);
 };
+
+export const FilesToggle: FC<{ visible: boolean; onToggle: () => void }> = ({
+	visible,
+	onToggle,
+}) => (
+	<Tooltip
+		content={workspaceHotkeys.toggleFiles.meta.name}
+		kbd={workspaceHotkeys.toggleFiles.hotkey}
+	>
+		<Button
+			iconOnly
+			variant="ghost"
+			aria-label={workspaceHotkeys.toggleFiles.meta.name}
+			aria-pressed={visible}
+			onClick={onToggle}
+		>
+			{visible ? <Icon name="files-sidebar" /> : <Icon name="sidebar-narrow" />}
+		</Button>
+	</Tooltip>
+);
 
 const DiffOverflowToggle: FC<
 	Omit<ComponentProps<typeof Toggle>, "aria-label" | "pressed" | "onPressedChange">
@@ -2136,6 +2225,41 @@ const DiffStyleToggleGroup: FC<
 		</Tooltip>
 	);
 };
+
+export const DiffControls: FC<{ canUseSplitDiff?: boolean; children?: ReactNode }> = ({
+	canUseSplitDiff = true,
+	children,
+}) => (
+	<Toolbar.Root aria-label="Diff controls" className={styles.diffControls}>
+		{children}
+		<ToggleGroupStyles>
+			<Toolbar.Button
+				render={
+					<DiffOverflowToggle render={<ToggleStyles iconOnly />}>
+						<Icon name="text-wrap" />
+					</DiffOverflowToggle>
+				}
+			/>
+			<Toolbar.Button
+				render={
+					<DiffBackgroundsToggle render={<ToggleStyles iconOnly />}>
+						<Icon name="text-block" />
+					</DiffBackgroundsToggle>
+				}
+			/>
+		</ToggleGroupStyles>
+		{canUseSplitDiff && (
+			<DiffStyleToggleGroup render={<ToggleGroupStyles />}>
+				<Toolbar.Button render={<Toggle render={<ToggleStyles />} />} value="split">
+					Split
+				</Toolbar.Button>
+				<Toolbar.Button render={<Toggle render={<ToggleStyles />} />} value="unified">
+					Unified
+				</Toolbar.Button>
+			</DiffStyleToggleGroup>
+		)}
+	</Toolbar.Root>
+);
 
 /**
  * Kept whole and out of the component so the compiler can memoise the layout on
@@ -2289,7 +2413,7 @@ const Diff: FC<{
 
 	const reviewedFilesContextId = weakFileParentIdentityKey(fileParent);
 	const { data: reviewedFiles } = useSuspenseQuery(
-		reviewedFilesQueryOptions(projectId, reviewedFilesContextId),
+		reviewedFilesQueryOptions({ projectId, contextId: reviewedFilesContextId }),
 	);
 
 	// Eagerly fetch all diffs regardless of unidiff setting, both for UX and for the total line
@@ -2544,13 +2668,6 @@ const Diff: FC<{
 		return () => resizeObserver.disconnect();
 	}, [diffContentsEl, viewerRef, wraps, diffViewSansAnno]);
 
-	const layoutId = `project=${projectId}:details`;
-	const panelIds: Array<PanelId> = filesVisible ? ["files-panel", "diff-panel"] : ["diff-panel"];
-	const diffLayout = useDefaultLayout({
-		id: layoutId,
-		panelIds,
-	});
-
 	// Hoisted out of the JSX below, where they used to be called inline: the
 	// empty branch that follows returns before that JSX, and a hook reached only
 	// on one branch is a hook called conditionally.
@@ -2583,178 +2700,119 @@ const Diff: FC<{
 
 	const filesOnRight = diffSettings?.filesPanelRight ?? defaultSettings.filesPanelRight;
 	const filesPanel = filesVisible ? (
-		<Panel
-			id={"files-panel" satisfies PanelId}
-			className={styles.panel}
-			defaultSize={320}
-			minSize={220}
-			groupResizeBehavior="preserve-pixel-size"
-		>
-			<div className={styles.filesPanelContent} ref={filesPanelRef}>
-				{fileFilter.rowProps === null ? (
-					<ChangesHeaderRow
-						projectId={projectId}
-						fileParent={fileParent}
-						changes={changes}
-						lineStats={lineStats}
-						onOpenFilter={fileFilter.open}
-					/>
-				) : (
-					<ListFilterRow {...fileFilter.rowProps} />
-				)}
-				<div
-					className={classes(uiStyles.scroller, uiStyles.scrollerWithSeparator, styles.diffFiles)}
-				>
-					<FilesTree
-						focusScope="files"
-						onRowSelection={activateRow}
-						projectId={projectId}
-						rows={filesRows}
-						collapsedDirectories={filesCollapsedDirectories}
-						onToggleDirectoryCollapsed={(path) =>
-							dispatch(projectSlice.actions.toggleFilesDirectoryCollapsed({ projectId, path }))
-						}
-						selection={filesSelection}
-						addressSpace={filesAddressSpace}
-						fileParent={fileParent}
-						reviewedPaths={reviewedFilePaths}
-						ref={filesTreeRef}
-					/>
-				</div>
+		<div className={styles.filesPanelContent} ref={filesPanelRef}>
+			{fileFilter.rowProps === null ? (
+				<ChangesHeaderRow
+					projectId={projectId}
+					fileParent={fileParent}
+					changes={changes}
+					lineStats={lineStats}
+					onOpenFilter={fileFilter.open}
+				/>
+			) : (
+				<ListFilterRow {...fileFilter.rowProps} />
+			)}
+			<div className={classes(uiStyles.scroller, uiStyles.scrollerWithSeparator, styles.diffFiles)}>
+				<FilesTree
+					focusScope="files"
+					onRowSelection={activateRow}
+					projectId={projectId}
+					rows={filesRows}
+					collapsedDirectories={filesCollapsedDirectories}
+					onToggleDirectoryCollapsed={(path) =>
+						dispatch(projectSlice.actions.toggleFilesDirectoryCollapsed({ projectId, path }))
+					}
+					selection={filesSelection}
+					addressSpace={filesAddressSpace}
+					fileParent={fileParent}
+					reviewedPaths={reviewedFilePaths}
+					ref={filesTreeRef}
+				/>
 			</div>
-		</Panel>
+		</div>
 	) : null;
 
 	return (
-		<div className={styles.diffTab}>
-			<Group
-				id={layoutId}
-				defaultLayout={diffLayout.defaultLayout}
-				onLayoutChanged={diffLayout.onLayoutChanged}
-			>
-				{filesPanel !== null && !filesOnRight && (
-					<>
-						{filesPanel}
-						<ResizeHandle />
-					</>
+		<DiffPanels
+			layoutId={`project=${projectId}:details`}
+			files={filesPanel}
+			filesOnRight={filesOnRight}
+		>
+			<div className={styles.actions}>
+				{canShowFiles && (
+					<FilesToggle
+						visible={filesVisible}
+						onToggle={() => dispatch(projectSlice.actions.toggleFiles({ projectId }))}
+					/>
 				)}
 
-				<Panel id={"diff-panel" satisfies PanelId} minSize={300} className={styles.panel}>
-					<div className={styles.actions}>
-						{canShowFiles && <FilesToggle projectId={projectId} />}
+				{headerSlot}
 
-						{headerSlot}
+				{!statsShownElsewhere && <ChangeStats fileCount={changes.length} lineStats={lineStats} />}
 
-						{!statsShownElsewhere && (
-							<ChangeStats fileCount={changes.length} lineStats={lineStats} />
-						)}
+				<DiffControls canUseSplitDiff={canUseSplitDiff === true}>
+					<Toolbar.Button
+						className={getButtonClassName({ variant: "outline" })}
+						disabled={preparedDiffFiles.length === 0 || preparedDiffFiles.length !== changes.length}
+						onClick={toggleAllFilesReviewed}
+					>
+						{allFilesReviewed ? "Mark all unreviewed" : "Mark all reviewed"}
+					</Toolbar.Button>
+				</DiffControls>
+			</div>
 
-						<Toolbar.Root aria-label="Diff controls" className={styles.diffControls}>
-							<Toolbar.Button
-								className={getButtonClassName({ variant: "outline" })}
-								disabled={
-									preparedDiffFiles.length === 0 || preparedDiffFiles.length !== changes.length
-								}
-								onClick={toggleAllFilesReviewed}
-							>
-								{allFilesReviewed ? "Mark all unreviewed" : "Mark all reviewed"}
-							</Toolbar.Button>
-							<ToggleGroupStyles>
-								<Toolbar.Button
-									render={
-										<DiffOverflowToggle render={<ToggleStyles iconOnly />}>
-											<Icon name="text-wrap" />
-										</DiffOverflowToggle>
-									}
-								/>
-								<Toolbar.Button
-									render={
-										<DiffBackgroundsToggle render={<ToggleStyles iconOnly />}>
-											<Icon name="text-block" />
-										</DiffBackgroundsToggle>
-									}
-								/>
-							</ToggleGroupStyles>
-							{canUseSplitDiff && (
-								<DiffStyleToggleGroup render={<ToggleGroupStyles />}>
-									<Toolbar.Button
-										render={<Toggle render={<ToggleStyles />} />}
-										value={"split" satisfies GUISettings["diffStyle"]}
-									>
-										Split
-									</Toolbar.Button>
-									<Toolbar.Button
-										render={<Toggle render={<ToggleStyles />} />}
-										value={"unified" satisfies GUISettings["diffStyle"]}
-									>
-										Unified
-									</Toolbar.Button>
-								</DiffStyleToggleGroup>
-							)}
-						</Toolbar.Root>
-					</div>
-
-					{/* One panel child, so `.panel`'s two-row grid still sizes the
+			{/* One panel child, so `.panel`'s two-row grid still sizes the
 					    diff: the bar is an auto row inside this, not a third row
 					    that would take the diff's. */}
-					<div className={styles.diffArea}>
-						{fileParent._tag === "Commit" && (
-							<ConflictBar
-								projectId={projectId}
-								commitId={fileParent.commitId}
-								conflicts={conflicts}
-								manual={manualConflicts}
-								busy={resolvingConflict || conflictsStale}
-								onResolve={(specs) =>
-									resolveConflict({ projectId, commitId: fileParent.commitId, specs })
-								}
-							/>
-						)}
-
-						<div
-							data-focus-scope={"diff" satisfies FocusScope}
-							// oxlint-disable-next-line jsx_a11y/no-noninteractive-tabindex -- Revisit this when we add hunk/line selection.
-							tabIndex={0}
-							className={styles.diffContentsContainer}
-							ref={diffContentsRef}
-						>
-							<DiffContents
-								activeFileItemId={activeFileItemId}
-								diffContextKey={diffContextKey}
-								onViewerFileSelection={onPassiveFileSelection}
-								fileParent={fileParent}
-								projectId={projectId}
-								diffView={diffView}
-								annotationsByPath={annotationsByPath}
-								threadsByPath={anchoredThreadsByPath}
-								threadReviewId={threadReview?.number ?? 0}
-								diffBackgrounds={diffSettings?.diffBackground}
-								diffOverflow={diffSettings?.diffOverflow}
-								diffStyle={diffStyle}
-								commentAnnotations={commentAnnotations}
-								reviewedFiles={reviewedFiles}
-								manualCollapseByItem={manualCollapseByItem}
-								setManualCollapse={setManualCollapse}
-								setFilesReviewed={setFilesReviewed}
-								focusScopeRef={focusScopeRef}
-								viewerRef={viewerRef}
-								didScrollToViaFileRef={didScrollToViaFileRef}
-								pendingFileRef={pendingFileRef}
-								renderAllFiles={renderAllFiles}
-								minimapFiles={minimapShown ? minimapFiles : null}
-							/>
-						</div>
-					</div>
-				</Panel>
-
-				{filesPanel !== null && filesOnRight && (
-					<>
-						<ResizeHandle />
-						{filesPanel}
-					</>
+			<div className={styles.diffArea}>
+				{fileParent._tag === "Commit" && (
+					<ConflictBar
+						projectId={projectId}
+						commitId={fileParent.commitId}
+						conflicts={conflicts}
+						manual={manualConflicts}
+						busy={resolvingConflict || conflictsStale}
+						onResolve={(specs) =>
+							resolveConflict({ projectId, commitId: fileParent.commitId, specs })
+						}
+					/>
 				)}
-			</Group>
-		</div>
+
+				<div
+					data-focus-scope={"diff" satisfies FocusScope}
+					// oxlint-disable-next-line jsx_a11y/no-noninteractive-tabindex -- Revisit this when we add hunk/line selection.
+					tabIndex={0}
+					className={styles.diffContentsContainer}
+					ref={diffContentsRef}
+				>
+					<DiffContents
+						activeFileItemId={activeFileItemId}
+						diffContextKey={diffContextKey}
+						onViewerFileSelection={onPassiveFileSelection}
+						fileParent={fileParent}
+						projectId={projectId}
+						diffView={diffView}
+						annotationsByPath={annotationsByPath}
+						threadsByPath={anchoredThreadsByPath}
+						threadReviewId={threadReview?.number ?? 0}
+						diffBackgrounds={diffSettings?.diffBackground}
+						diffOverflow={diffSettings?.diffOverflow}
+						diffStyle={diffStyle}
+						commentAnnotations={commentAnnotations}
+						reviewedFiles={reviewedFiles}
+						manualCollapseByItem={manualCollapseByItem}
+						setManualCollapse={setManualCollapse}
+						setFilesReviewed={setFilesReviewed}
+						focusScopeRef={focusScopeRef}
+						viewerRef={viewerRef}
+						didScrollToViaFileRef={didScrollToViaFileRef}
+						pendingFileRef={pendingFileRef}
+						renderAllFiles={renderAllFiles}
+						minimapFiles={minimapShown ? minimapFiles : null}
+					/>
+				</div>
+			</div>
+		</DiffPanels>
 	);
 };
 

@@ -30,9 +30,10 @@ import { useNewBranch } from "#ui/routes/project/$id/workspace/useNewBranch.ts";
 import { showNativeMenuFromTrigger } from "#ui/native-menu.ts";
 import { RowToolbar } from "#ui/routes/project/$id/workspace/Row.tsx";
 import { getRowButtonClassName } from "#ui/routes/project/$id/workspace/Row-utils.ts";
+import { ButDevSidebar } from "./ButDev.tsx";
 
 /** The tabs in the order they are shown, for cycling with `[` and `]`. */
-const pageOrder: Array<PageId> = ["workspace", "branches"];
+const pageOrder: Array<PageId> = ["workspace", "branches", "but-dev"];
 
 const adjacentPage = (tab: PageId, offset: -1 | 1): PageId => {
 	const index = pageOrder.indexOf(tab);
@@ -67,6 +68,7 @@ export const Sidebar: FC<{
 		(state) => projectSlice.selectors.selectPendingOperation(state, projectId)._tag === "None",
 	);
 	const page = usePage();
+	const localPage = page !== "but-dev";
 
 	const selectPage = (value: Array<PageId>) => {
 		const head = value[0];
@@ -121,7 +123,7 @@ export const Sidebar: FC<{
 			options: {
 				conflictBehavior: "allow",
 				meta: workspaceHotkeys.applyBranch.meta,
-				enabled: noOperationPending,
+				enabled: localPage && noOperationPending,
 			},
 		},
 		{
@@ -129,7 +131,7 @@ export const Sidebar: FC<{
 			callback: newBranch.createInWorkspace,
 			options: {
 				conflictBehavior: "allow",
-				enabled: newBranch.canCreateInWorkspace,
+				enabled: localPage && newBranch.canCreateInWorkspace,
 				meta: workspaceHotkeys.createIndependentBranch.meta,
 				requireReset: true,
 			},
@@ -142,7 +144,7 @@ export const Sidebar: FC<{
 			callback: newBranch.createAndSwitch,
 			options: {
 				conflictBehavior: "allow",
-				enabled: canCreateBranch,
+				enabled: localPage && canCreateBranch,
 				meta: workspaceHotkeys.createBranchAndSwitch.meta,
 				requireReset: true,
 			},
@@ -151,7 +153,7 @@ export const Sidebar: FC<{
 			hotkey: workspaceHotkeys.fetchFromRemotes.hotkey,
 			callback: fetchFromRemotes.fetch,
 			options: {
-				enabled: fetchFromRemotes.enabled,
+				enabled: localPage && fetchFromRemotes.enabled,
 				meta: workspaceHotkeys.fetchFromRemotes.meta,
 			},
 		},
@@ -160,7 +162,7 @@ export const Sidebar: FC<{
 			callback: updateWorkspace,
 			options: {
 				conflictBehavior: "allow",
-				enabled: canUpdateWorkspace,
+				enabled: localPage && canUpdateWorkspace,
 				meta: workspaceHotkeys.updateWorkspace.meta,
 			},
 		},
@@ -193,7 +195,7 @@ export const Sidebar: FC<{
 					bell={<NotificationBell projectId={projectId} />}
 					project={project}
 					isFetchPending={fetchFromRemotes.isPending}
-					canOpenOperationsLog={noOperationPending}
+					canOpenOperationsLog={localPage && noOperationPending}
 					onOpenOperationsLog={openOperationsLog}
 					canOpenSettings={noOperationPending}
 					onOpenSettings={openSettings}
@@ -221,8 +223,14 @@ export const Sidebar: FC<{
 						<Icon name="branch" />
 						<span className={styles.tabLabel}>Branches</span>
 					</Toggle>
+					<Toggle render={<ToggleStyles />} value={"but-dev" satisfies PageId} aria-label="but.dev">
+						<Icon name="globe" />
+						<span className={styles.tabLabel}>but.dev</span>
+					</Toggle>
 				</ToggleGroup>
 			</div>
+
+			{page === "but-dev" && <ButDevSidebar className={styles.page} />}
 
 			<Activity mode={page === "branches" ? "visible" : "hidden"}>
 				<BranchesList
