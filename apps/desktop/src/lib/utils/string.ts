@@ -30,11 +30,25 @@ export function truncate(text: string, maxChars: number, maxLines: number): stri
 }
 
 export function rejoinParagraphs(text: string): string {
+	const codeFence = /^(```|~~~)/;
+	let inCodeBlock = false;
+
 	return text
 		.split("\n")
 		.reduce((acc, line, index, lines) => {
 			const trimmed = line.trim();
 			const prevLine = index > 0 ? lines[index - 1]?.trim() || "" : "";
+
+			// Code fence - preserve it and track whether we are inside a code block
+			if (codeFence.test(trimmed)) {
+				inCodeBlock = !inCodeBlock;
+				return acc + (acc && !acc.endsWith("\n") ? "\n" : "") + line;
+			}
+
+			// Inside a code block - keep the line exactly as written
+			if (inCodeBlock) {
+				return acc + "\n" + line;
+			}
 
 			// Empty line - preserve as paragraph break
 			if (!trimmed) {
@@ -53,7 +67,7 @@ export function rejoinParagraphs(text: string): string {
 
 			// Continue paragraph if previous line doesn't end with punctuation
 			// and current line doesn't start with capital
-			if (!/[.!?]$/.test(prevLine) && !/^[A-Z]/.test(trimmed)) {
+			if (!/[.!?]$/.test(prevLine) && !/^[A-Z]/.test(trimmed) && !codeFence.test(prevLine)) {
 				return acc + " " + trimmed;
 			}
 
