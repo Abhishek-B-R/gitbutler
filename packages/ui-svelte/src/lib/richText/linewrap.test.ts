@@ -1,4 +1,4 @@
-import { wrapLine } from "$lib/richText/linewrap";
+import { parseBullet, wrapLine } from "$lib/richText/linewrap";
 import { expect, test, describe } from "vitest";
 
 describe("wrapline", () => {
@@ -150,5 +150,19 @@ describe("wrapline", () => {
 		const newText = newLine.substring(2).trim(); // Remove '- ' prefix
 		const reconstructed = newText + " " + remainder;
 		expect(reconstructed).toEqual(originalText);
+	});
+});
+
+describe("parseBullet", () => {
+	test.each([
+		["- item", "  "],
+		["  - item", "    "],
+		["1. item", "   "],
+		["10. item", "    "],
+		["  1. item", "     "],
+		["    12. item", "        "],
+		["0. item", "   "],
+	])("continuation indent for %j", (line, indent) => {
+		expect(parseBullet(line)?.indent).toEqual(indent);
 	});
 });

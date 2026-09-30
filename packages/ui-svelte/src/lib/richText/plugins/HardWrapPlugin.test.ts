@@ -112,6 +112,26 @@ describe("HardWrapPlugin with multi-paragraph structure", () => {
 		});
 	});
 
+	it("should align continuation lines of an indented numbered item with its text", () => {
+		editor.update(() => {
+			const root = getRoot();
+			const paragraph = createParagraphNode();
+			const textNode = createTextNode("  1. Nested numbered item that needs wrapping");
+			paragraph.append(textNode);
+			root.append(paragraph);
+
+			wrapIfNecessary({ node: textNode, maxLength: 25 });
+		});
+
+		editor.read(() => {
+			const lines = getRoot()
+				.getChildren()
+				.map((child) => child.getTextContent());
+
+			expect(lines).toEqual(["  1. Nested numbered item", "     that needs wrapping"]);
+		});
+	});
+
 	it("should not wrap lines that are exempt (code blocks)", () => {
 		editor.update(() => {
 			const root = getRoot();
