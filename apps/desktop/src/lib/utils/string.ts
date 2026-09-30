@@ -38,7 +38,7 @@ export function rejoinParagraphs(text: string): string {
 
 			// Empty line - preserve as paragraph break
 			if (!trimmed) {
-				return acc + "\n";
+				return acc + "\n\n";
 			}
 
 			// List items or block elements - preserve spacing
