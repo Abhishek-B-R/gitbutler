@@ -299,14 +299,8 @@ function charDiff(text1: string, text2: string): { 0: number; 1: string }[] {
 	return diff;
 }
 
-const WHITESPACE_REGEX = new RegExp(/\s/);
-
 function isLineEmpty(lines: Line[]) {
-	if (!lines[0]?.content.match(WHITESPACE_REGEX)) {
-		return true;
-	}
-
-	return false;
+	return !lines[0]?.content;
 }
 
 type SelectionParams = {

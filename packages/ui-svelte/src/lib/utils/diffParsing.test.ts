@@ -1,4 +1,4 @@
-import { codeContentToTokens } from "$lib/utils/diffParsing";
+import { codeContentToTokens, generateRows, parseHunk } from "$lib/utils/diffParsing";
 import { describe, expect, test } from "vitest";
 
 describe.concurrent("codeContentToTokens", () => {
@@ -31,5 +31,42 @@ describe.concurrent("codeContentToTokens", () => {
 		const result = codeContentToTokens("hello", undefined);
 		const html = result[0].join("");
 		expect(html).toContain("data-no-drag");
+	});
+});
+
+describe.concurrent("generateRows word diff", () => {
+	function rowsFor(hunk: string, inline: boolean) {
+		const { contentSections } = parseHunk(hunk);
+		return generateRows("file.txt", contentSections, inline, undefined, undefined, undefined);
+	}
+
+	test("highlights the changed part of a line that has spaces", () => {
+		const html = rowsFor("@@ -1 +1 @@\n-foo = bar\n+foo = baz", false)
+			.flatMap((row) => row.tokens)
+			.join("");
+		expect(html).toContain("token-inserted");
+		expect(html).toContain("token-deleted");
+	});
+
+	test("highlights the changed part of a line without any spaces", () => {
+		const html = rowsFor("@@ -1 +1 @@\n-FOO=bar\n+FOO=baz", false)
+			.flatMap((row) => row.tokens)
+			.join("");
+		expect(html).toContain("token-inserted");
+		expect(html).toContain("token-deleted");
+	});
+
+	test("highlights the changed part of a line without any spaces in inline mode", () => {
+		const html = rowsFor("@@ -1 +1 @@\n-FOO=bar\n+FOO=baz", true)
+			.flatMap((row) => row.tokens)
+			.join("");
+		expect(html).toContain("token-inserted");
+	});
+
+	test("does not word diff when the removed line is empty", () => {
+		const html = rowsFor("@@ -1 +1 @@\n-\n+FOO=baz", false)
+			.flatMap((row) => row.tokens)
+			.join("");
+		expect(html).not.toContain("token-inserted");
 	});
 });
